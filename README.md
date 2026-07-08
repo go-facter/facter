@@ -1,6 +1,4 @@
-<!-- TODO: replace with the org banner once go-facter/brand ships the social image
-     (https://raw.githubusercontent.com/go-facter/brand/main/social/go-facter-facter.png). -->
-<p align="center"><img src="docs/assets/logo.svg" alt="go-facter/facter" width="88"></p>
+<p align="center"><img src="https://raw.githubusercontent.com/go-facter/brand/main/social/go-facter-facter.png" alt="go-facter/facter" width="720"></p>
 
 # facter — go-facter
 
