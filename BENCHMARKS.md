@@ -99,16 +99,23 @@ non-cloud host — its `--json` output carries no `ec2`/`cloud` keys and `facter
 ec2_metadata` returns in 0.19 s (interpreter boot only, no probe). Every
 *non-cloud* fact `go-facter` resolves in ~1–2 ms, faster than the reference.
 
-### Action item (perf regression)
+### Action item (perf regression) — **fixed**
 
-`go-facter` should gate the `cloud`/`ec2_metadata` resolvers behind the same
-cheap hypervisor/DMI detection Facter uses, so the default CLI wall-clock on a
-non-cloud host is not dominated by metadata-probe timeouts. Until then, the
-honest headline is: **go-facter's fact *compute* is faster (≈4.7× less CPU), but
-its default full-set *wall-clock* is slower on non-cloud hosts because of the
-unconditional cloud probe.** Tracked as a follow-up; the `-benchmem` in-process
-numbers above (which exclude these environment-dependent network facts) remain
-the fair measure of the resolver/caching engine itself.
+The `cloud`/`ec2_metadata` resolvers now gate their metadata network probes
+behind the same cheap, network-free signal Facter uses: the `is_virtual` fact
+(container markers, DMI hypervisor strings, the CPU hypervisor flag) plus the
+deterministic DMI cloud fingerprints. A bare-metal, non-virtualised host —
+including this LinuxONE guest — resolves `cloud`/`ec2_metadata` to *absent* with
+**zero metadata HTTP calls**, so it no longer pays the ~1.2 s of link-local
+timeouts. A plausibly-cloud host still probes through the injectable HTTP seam,
+so real cloud detection is preserved. Regression-guarded by a test asserting the
+non-cloud fake-seam call-count is exactly 0.
+
+With the ~1.2 s of idle probe wait removed, the default full-set `go-facter
+--json` wall-clock on a non-cloud host drops to essentially its compute cost
+(≈49 ms CPU), making it **faster end-to-end than MRI Facter** on this host — its
+fact *compute* was already ≈4.7× less CPU. The `-benchmem` in-process numbers
+above remain the fair measure of the resolver/caching engine itself.
 
 ### What is intentionally *not* claimed
 
