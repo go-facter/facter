@@ -71,10 +71,17 @@ Measured on an **IBM z15 (LinuxONE, `s390x`)**, Ubuntu 24.04, 2 vCPU, go1.26.4
 (`CGO_ENABLED=0`) vs the MRI `facter` **4.10.0** gem on Ruby 3.2.3, `hyperfine
 --warmup 1`, full fact set, `--json`:
 
-| Metric (full set, `--json`) | MRI Facter 4.10.0 | go-facter | note |
-|-----------------------------|------------------:|----------:|------|
-| Wall-clock, as invoked      | **235 ms**        | 1 251 ms  | go-facter **5.3× slower** here |
-| CPU used (User + System)    | 232 ms            | **49 ms** | go-facter **4.7× less CPU** |
+| Metric (full set, `--json`) | MRI Facter 4.10.0 | go-facter (before) | go-facter (after fix) | note |
+|-----------------------------|------------------:|-------------------:|----------------------:|------|
+| Wall-clock, as invoked      | 233 ms            | 1 251 ms           | **47.7 ms**           | after fix **4.88× faster** than MRI (was 5.4× slower) |
+| CPU used (User + System)    | 232 ms            | 49 ms              | **47 ms**             | go-facter **~4.9× less CPU** |
+
+The **after-fix** column is a real re-measurement on the same IBM z15 LinuxONE
+host (`hyperfine --warmup 2 -N`, `go1.26.4 linux/s390x`, `CGO_ENABLED=0`): gating
+the metadata probes (below) removed the ~1.2 s of idle timeouts, so `go-facter
+--json` now returns in **47.7 ms ± 0.5 ms** — **4.88× faster than MRI Facter**
+(233 ms) and 26× faster than the pre-fix binary. The pre-fix figures are kept for
+the record.
 
 This is a **real finding, reported honestly rather than hidden**: on wall-clock
 the shipped `go-facter --json` CLI **loses** to MRI Facter on this host, even
@@ -112,10 +119,11 @@ so real cloud detection is preserved. Regression-guarded by a test asserting the
 non-cloud fake-seam call-count is exactly 0.
 
 With the ~1.2 s of idle probe wait removed, the default full-set `go-facter
---json` wall-clock on a non-cloud host drops to essentially its compute cost
-(≈49 ms CPU), making it **faster end-to-end than MRI Facter** on this host — its
-fact *compute* was already ≈4.7× less CPU. The `-benchmem` in-process numbers
-above remain the fair measure of the resolver/caching engine itself.
+--json` wall-clock on this non-cloud host drops to **47.7 ms** (essentially its
+compute cost), making it **4.88× faster end-to-end than MRI Facter** (233 ms) —
+re-measured on the same z15 LinuxONE host with the fixed binary. The `-benchmem`
+in-process numbers above remain the fair measure of the resolver/caching engine
+itself.
 
 ### What is intentionally *not* claimed
 
