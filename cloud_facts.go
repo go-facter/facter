@@ -29,6 +29,29 @@ func (c *Collection) collectCloud() (any, bool) {
 
 // cloudProvider returns the detected provider name, or "" when none is identified.
 func (c *Collection) cloudProvider() string {
+	// DMI fingerprints are deterministic and need no network, so they resolve
+	// the provider on every real cloud instance without a probe.
+	if p := c.dmiProvider(); p != "" {
+		return p
+	}
+	// DMI is inconclusive. Only fall back to a bounded metadata probe when the
+	// host is plausibly a cloud instance: a bare-metal host must never stall
+	// waiting on a link-local endpoint that will never answer.
+	if !c.plausiblyCloud() {
+		return ""
+	}
+	if _, ok := c.env.httpGet(ec2MetadataBase, nil); ok {
+		return "aws"
+	}
+	if _, ok := c.env.httpGet(azureMetadata, map[string]string{"Metadata": "true"}); ok {
+		return "azure"
+	}
+	return ""
+}
+
+// dmiProvider identifies the hosting provider from DMI fingerprints alone —
+// deterministic and network-free — returning "" when DMI carries no cloud hint.
+func (c *Collection) dmiProvider() string {
 	hay, assetTag := c.dmiCloudHints()
 	switch {
 	case strings.Contains(hay, "amazon"), strings.Contains(hay, "ec2"):
@@ -37,15 +60,23 @@ func (c *Collection) cloudProvider() string {
 		return "gce"
 	case assetTag == azureAssetTag:
 		return "azure"
+	default:
+		return ""
 	}
-	// DMI inconclusive: fall back to a bounded metadata probe.
-	if _, ok := c.env.httpGet(ec2MetadataBase, nil); ok {
-		return "aws"
-	}
-	if _, ok := c.env.httpGet(azureMetadata, map[string]string{"Metadata": "true"}); ok {
-		return "azure"
-	}
-	return ""
+}
+
+// plausiblyCloud reports whether the host could be a cloud instance, gating the
+// metadata network probes behind a no-network signal: the is_virtual fact (which
+// itself keys off container markers, DMI hypervisor strings and the CPU
+// hypervisor flag). A bare-metal, non-virtualised host is never plausibly cloud,
+// so its cloud and ec2_metadata facts resolve to absent with zero network wait —
+// exactly what Facter does by gating cloud facts behind virtual detection.
+func (c *Collection) plausiblyCloud() bool {
+	// is_virtual is a built-in fact and always resolves to a bool, so a missing
+	// or non-bool value degrades safely to "not cloud".
+	v, _ := c.Value("is_virtual")
+	b, _ := v.(bool)
+	return b
 }
 
 // dmiCloudHints returns a lower-cased haystack of the DMI vendor/product strings
@@ -71,6 +102,12 @@ func (c *Collection) dmiCloudHints() (haystack, assetTag string) {
 // link-local IMDS index) into a flat map. It is best-effort and environment
 // dependent: absent unless the IMDS endpoint answers, so it never blocks.
 func (c *Collection) collectEC2Metadata() (any, bool) {
+	// The IMDS endpoint only exists on cloud instances, so gate the crawl behind
+	// the same no-network plausibility check: a bare-metal host makes zero HTTP
+	// calls and the fact is simply absent.
+	if !c.plausiblyCloud() {
+		return nil, false
+	}
 	index, ok := c.env.httpGet(ec2MetadataBase, nil)
 	if !ok {
 		return nil, false
