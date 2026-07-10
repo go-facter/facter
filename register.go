@@ -29,6 +29,42 @@ func registerCore(c *Collection) {
 	c.AddFunc("timezone", (*Collection).collectTimezone)
 	c.AddFunc("path", (*Collection).collectPath)
 	c.AddFunc("facterversion", (*Collection).collectFacterVersion)
+	c.AddFunc("dmi", (*Collection).collectDMI)
+	c.AddFunc("load_averages", (*Collection).collectLoadAverages)
+	c.AddFunc("ssh", (*Collection).collectSSH)
+	c.AddFunc("selinux", (*Collection).collectSELinux)
+	c.AddFunc("cloud", (*Collection).collectCloud)
+	c.AddFunc("ec2_metadata", (*Collection).collectEC2Metadata)
+	c.AddFunc("ruby", (*Collection).collectRuby)
+	c.AddFunc("fips_enabled", (*Collection).collectFIPSEnabled)
+	c.AddFunc("aio_agent_version", (*Collection).collectAIOAgentVersion)
+	c.AddFunc("augeasversion", (*Collection).collectAugeasVersion)
+	c.AddFunc("env_windows_installdir", (*Collection).collectEnvWindowsInstalldir)
+
+	// SSH legacy flat facts (sshXXXkey and sshfp_XXX) derive from the structured
+	// ssh fact, so the host keys are read and fingerprinted at most once.
+	for _, algo := range []string{"dsa", "rsa", "ecdsa", "ed25519"} {
+		algo := algo
+		c.AddFunc("ssh"+algo+"key", func(cc *Collection) (any, bool) { return cc.collectSSHLegacyKey(algo) })
+		c.AddFunc("sshfp_"+algo, func(cc *Collection) (any, bool) { return cc.collectSSHFP(algo) })
+	}
+
+	// Memory sizes in mebibytes, the legacy *_mb facts manifests still read.
+	memMB := map[string]string{
+		"memorysize_mb": "memory.system.total_bytes",
+		"memoryfree_mb": "memory.system.available_bytes",
+		"swapsize_mb":   "memory.swap.total_bytes",
+		"swapfree_mb":   "memory.swap.available_bytes",
+	}
+	mbNames := make([]string, 0, len(memMB))
+	for name := range memMB {
+		mbNames = append(mbNames, name)
+	}
+	sort.Strings(mbNames)
+	for _, name := range mbNames {
+		path := memMB[name]
+		c.AddFunc(name, func(cc *Collection) (any, bool) { return cc.memoryMB(path) })
+	}
 
 	// Kernel facts share one memoised probe.
 	c.AddFunc("kernel", func(cc *Collection) (any, bool) { return cc.kernelData().kernel, true })
@@ -64,6 +100,19 @@ func registerCore(c *Collection) {
 		"uptime_hours":              "system_uptime.hours",
 		"id":                        "identity.user",
 		"gid":                       "identity.gid",
+		"bios_vendor":               "dmi.bios.vendor",
+		"bios_version":              "dmi.bios.version",
+		"bios_release_date":         "dmi.bios.release_date",
+		"boardmanufacturer":         "dmi.board.manufacturer",
+		"boardproductname":          "dmi.board.product",
+		"boardserialnumber":         "dmi.board.serial_number",
+		"boardassettag":             "dmi.board.asset_tag",
+		"chassistype":               "dmi.chassis.type",
+		"chassisassettag":           "dmi.chassis.asset_tag",
+		"manufacturer":              "dmi.manufacturer",
+		"productname":               "dmi.product.name",
+		"serialnumber":              "dmi.product.serial_number",
+		"uuid":                      "dmi.product.uuid",
 	}
 	names := make([]string, 0, len(aliases))
 	for name := range aliases {

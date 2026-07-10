@@ -31,6 +31,7 @@ type fakeEnv struct {
 	euid    int
 	ifaces  []ifaceData
 	ifErr   bool
+	https   map[string]string // url -> body (reachable)
 }
 
 // env materialises a *env whose seams are backed by the fakeEnv maps.
@@ -104,6 +105,12 @@ func (f fakeEnv) env() *env {
 		},
 		now:  func() time.Time { return now },
 		euid: func() int { return f.euid },
+		httpGet: func(url string, _ map[string]string) (string, bool) {
+			if body, ok := f.https[url]; ok {
+				return body, true
+			}
+			return "", false
+		},
 	}
 }
 

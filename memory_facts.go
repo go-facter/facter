@@ -222,6 +222,21 @@ func capacity(used, total uint64) string {
 	return fmt.Sprintf("%.2f%%", float64(used)/float64(total)*100)
 }
 
+// memoryMB resolves a byte-valued memory fact at path and renders it in
+// mebibytes with two decimals, the shape of the legacy *_mb facts. It is absent
+// when the underlying byte fact is (for example swap on a swapless host).
+func (c *Collection) memoryMB(path string) (any, bool) {
+	v, ok := c.Value(path)
+	if !ok {
+		return nil, false
+	}
+	b, ok := v.(uint64)
+	if !ok {
+		return nil, false
+	}
+	return fmt.Sprintf("%.2f", float64(b)/(1024*1024)), true
+}
+
 // atou64 parses an unsigned integer, returning 0 on any error.
 func atou64(s string) uint64 {
 	n, err := strconv.ParseUint(strings.TrimSpace(s), 10, 64)

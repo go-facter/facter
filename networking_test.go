@@ -163,6 +163,84 @@ func TestDNSDomainNoResolv(t *testing.T) {
 	}
 }
 
+func TestNetworkingScope6(t *testing.T) {
+	f := fakeEnv{goos: "linux", host: "h", ifaces: sampleIfaces()}
+	c := f.collection()
+	if v, _ := c.Value("networking.interfaces.eth0.scope6"); v != "link" {
+		t.Fatalf("scope6 = %v", v)
+	}
+	// bindings6 carry per-address scope6.
+	b6, _ := c.Value("networking.interfaces.eth0.bindings6")
+	arr := b6.([]any)
+	if arr[0].(map[string]any)["scope6"] != "link" {
+		t.Fatalf("bindings6 scope6 = %v", arr[0])
+	}
+}
+
+func TestScope6(t *testing.T) {
+	cases := map[string]string{
+		"::1":         "host",
+		"fe80::1":     "link",
+		"2001:db8::1": "global",
+		"not-an-ip":   "global",
+	}
+	for ip, want := range cases {
+		if got := scope6(ip); got != want {
+			t.Errorf("scope6(%q) = %q, want %q", ip, got, want)
+		}
+	}
+}
+
+func TestNetworkingDHCP(t *testing.T) {
+	f := fakeEnv{
+		goos:   "linux",
+		host:   "h",
+		ifaces: sampleIfaces(),
+		files: map[string]string{
+			"/var/lib/dhcp/dhclient.eth0.leases": "lease {\n  option dhcp-server-identifier 10.0.0.1;\n}\nlease {\n  option dhcp-server-identifier 10.0.0.254;\n}\n",
+		},
+	}
+	c := f.collection()
+	if v, _ := c.Value("networking.interfaces.eth0.dhcp"); v != "10.0.0.254" {
+		t.Fatalf("dhcp = %v (want last lease wins)", v)
+	}
+	if v, _ := c.Value("networking.dhcp"); v != "10.0.0.254" {
+		t.Fatalf("primary dhcp = %v", v)
+	}
+}
+
+func TestInterfaceDHCPNonLinux(t *testing.T) {
+	c := (fakeEnv{goos: "darwin"}).collection()
+	if got := c.interfaceDHCP("en0"); got != "" {
+		t.Errorf("darwin dhcp = %q", got)
+	}
+}
+
+func TestInterfaceDHCPSecondaryPath(t *testing.T) {
+	// The dhclient-<iface>.lease location is also honoured.
+	c := (fakeEnv{goos: "linux", files: map[string]string{
+		"/var/lib/dhclient/dhclient-eth0.lease": "option dhcp-server-identifier 192.168.1.1;\n",
+	}}).collection()
+	if got := c.interfaceDHCP("eth0"); got != "192.168.1.1" {
+		t.Errorf("secondary lease path = %q", got)
+	}
+}
+
+func TestParseDHCPServer(t *testing.T) {
+	if got := parseDHCPServer("no lease info here\n"); got != "" {
+		t.Errorf("no server = %q", got)
+	}
+	if got := parseDHCPServer("option dhcp-server-identifier 8.8.8.8;\n"); got != "8.8.8.8" {
+		t.Errorf("server = %q", got)
+	}
+}
+
+func TestDHCPLeasePaths(t *testing.T) {
+	if got := dhcpLeasePaths("eth0"); len(got) != 3 {
+		t.Fatalf("expected 3 candidate paths, got %v", got)
+	}
+}
+
 func TestNetmaskAndNetwork(t *testing.T) {
 	if got := netmaskV4(24); got != "255.255.255.0" {
 		t.Errorf("netmaskV4 = %q", got)
