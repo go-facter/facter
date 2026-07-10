@@ -35,6 +35,9 @@ func (c *Collection) collectNetworking() (any, bool) {
 	var primary map[string]any
 	for _, ifi := range ifaces {
 		entry := interfaceFact(ifi)
+		if dhcp := c.interfaceDHCP(ifi.Name); dhcp != "" {
+			entry["dhcp"] = dhcp
+		}
 		ifaceMap[ifi.Name] = entry
 		if primary == nil && !ifi.Loopback && ifi.Up {
 			if _, ok := entry["ip"]; ok {
@@ -48,7 +51,7 @@ func (c *Collection) collectNetworking() (any, bool) {
 	}
 	if primary != nil {
 		out["primary"] = primaryName
-		for _, k := range []string{"ip", "ip6", "mac", "mtu", "netmask", "network"} {
+		for _, k := range []string{"ip", "ip6", "mac", "mtu", "netmask", "netmask6", "network", "network6", "scope6", "dhcp"} {
 			if v, ok := primary[k]; ok {
 				out[k] = v
 			}
@@ -82,13 +85,15 @@ func interfaceFact(ifi ifaceData) map[string]any {
 			})
 		} else {
 			netw := networkAddr(a.IP, a.Prefix)
+			scope := scope6(a.IP)
 			if _, set := entry["ip6"]; !set {
 				entry["ip6"] = a.IP
 				entry["netmask6"] = prefix6(a.Prefix)
 				entry["network6"] = netw
+				entry["scope6"] = scope
 			}
 			bindings6 = append(bindings6, map[string]any{
-				"address": a.IP, "netmask": prefix6(a.Prefix), "network": netw,
+				"address": a.IP, "netmask": prefix6(a.Prefix), "network": netw, "scope6": scope,
 			})
 		}
 	}
@@ -171,6 +176,66 @@ func netmaskV4(prefix int) string {
 // prefix6 renders an IPv6 prefix length back as a CIDR suffix string.
 func prefix6(prefix int) string {
 	return "/" + strconv.Itoa(prefix)
+}
+
+// scope6 classifies an IPv6 address's scope the way Facter labels bindings6:
+// "host" for the loopback, "link" for link-local (fe80::/10), otherwise "global".
+func scope6(ip string) string {
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return "global"
+	}
+	switch {
+	case parsed.IsLoopback():
+		return "host"
+	case parsed.IsLinkLocalUnicast():
+		return "link"
+	default:
+		return "global"
+	}
+}
+
+// interfaceDHCP reports the DHCP server that configured an interface, read from
+// the standard dhclient lease-file locations. It is best-effort: a statically
+// configured interface (no lease) yields "", and the fact is then omitted, as
+// Facter omits dhcp on non-DHCP interfaces. Linux only.
+func (c *Collection) interfaceDHCP(name string) string {
+	if c.env.goos != "linux" {
+		return ""
+	}
+	for _, path := range dhcpLeasePaths(name) {
+		if text, ok := c.env.readText(path); ok {
+			if srv := parseDHCPServer(text); srv != "" {
+				return srv
+			}
+		}
+	}
+	return ""
+}
+
+// dhcpLeasePaths lists the conventional dhclient lease-file locations for an
+// interface, most-specific first.
+func dhcpLeasePaths(name string) []string {
+	return []string{
+		"/var/lib/dhcp/dhclient." + name + ".leases",
+		"/var/lib/dhclient/dhclient-" + name + ".lease",
+		"/var/lib/dhcp/dhclient-" + name + ".leases",
+	}
+}
+
+// parseDHCPServer extracts the last dhcp-server-identifier from a dhclient lease
+// file (the most recent lease wins, so the last value is authoritative).
+func parseDHCPServer(text string) string {
+	server := ""
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		rest, ok := strings.CutPrefix(line, "option dhcp-server-identifier ")
+		if !ok {
+			continue
+		}
+		server = strings.TrimRight(strings.TrimSpace(rest), ";")
+	}
+	return server
 }
 
 // networkAddr computes the network address of ip under the given prefix length.

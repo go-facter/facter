@@ -6,7 +6,9 @@ package facter
 
 import (
 	"context"
+	"io"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/user"
@@ -38,6 +40,7 @@ type env struct {
 	curUser    func() (userInfo, error)
 	now        func() time.Time
 	euid       func() int
+	httpGet    func(url string, headers map[string]string) (string, bool)
 }
 
 // dirEntry is the OS-neutral projection of a directory entry the collectors need.
@@ -89,7 +92,42 @@ func defaultEnv() *env {
 		curUser:    defaultCurUser,
 		now:        time.Now,
 		euid:       os.Geteuid,
+		httpGet:    defaultHTTPGet,
 	}
+}
+
+// metadataTimeout bounds a cloud-metadata probe. It is short and non-blocking by
+// design: a host that is not on a cloud provider must not stall fact resolution
+// waiting for an endpoint that will never answer.
+const metadataTimeout = 400 * time.Millisecond
+
+// defaultHTTPGet performs a bounded GET and returns the body on a 2xx response,
+// reporting reachability as a bool. Any transport error, timeout or non-2xx
+// status yields ("", false) so a cloud collector degrades to "absent" rather
+// than hanging or erroring.
+func defaultHTTPGet(url string, headers map[string]string) (string, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), metadataTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", false
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", false
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return "", false
+	}
+	return string(body), true
 }
 
 // commandTimeout bounds every external command a collector runs.

@@ -182,3 +182,33 @@ func TestAtou64(t *testing.T) {
 		t.Fatal("atou64")
 	}
 }
+
+func TestMemoryMBAliases(t *testing.T) {
+	c := (fakeEnv{goos: "linux", files: map[string]string{"/proc/meminfo": meminfoSample}}).collection()
+	// 16000 kB = 15.62 MiB.
+	if v, _ := c.Value("memorysize_mb"); v != "15.62" {
+		t.Errorf("memorysize_mb = %v", v)
+	}
+	// 4000 kB swap = 3.91 MiB.
+	if v, _ := c.Value("swapsize_mb"); v != "3.91" {
+		t.Errorf("swapsize_mb = %v", v)
+	}
+	if _, ok := c.Value("memoryfree_mb"); !ok {
+		t.Error("memoryfree_mb should be present")
+	}
+}
+
+func TestMemoryMBAbsent(t *testing.T) {
+	// Swapless host: the swap *_mb aliases are absent.
+	c := (fakeEnv{goos: "linux", files: map[string]string{"/proc/meminfo": "MemTotal: 100 kB\nMemFree: 40 kB\n"}}).collection()
+	if _, ok := c.Value("swapsize_mb"); ok {
+		t.Error("swapsize_mb should be absent without swap")
+	}
+	// A non-byte fact path is not convertible.
+	if _, ok := c.memoryMB("os.name"); ok {
+		t.Error("non-uint64 path should not convert")
+	}
+	if _, ok := c.memoryMB("does.not.exist"); ok {
+		t.Error("absent path should not convert")
+	}
+}

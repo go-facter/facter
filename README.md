@@ -40,15 +40,30 @@ every fact group's logic run on all six 64-bit architectures.
 
 `os` (name/family/release/distro, `os.macosx` on Darwin) · `kernel` /
 `kernelrelease` / `kernelversion` / `kernelmajversion` · `networking`
-(hostname/fqdn/domain, per-interface ip/ip6/mac/mtu/netmask/network + bindings,
-primary) · `processors` (count/physicalcount/models/isa) · `memory`
-(system + swap, bytes and human sizes) · `mountpoints` · `filesystems` · `disks`
-· `virtual` / `is_virtual` (hypervisor and container detection) · `system_uptime`
-(+ `uptime*` aliases) · `timezone` · `identity` (user/group/uid/gid/privileged) ·
-`path` · `facterversion`, plus the flat legacy aliases.
+(hostname/fqdn/domain, per-interface ip/ip6/mac/mtu/netmask/network + bindings /
+bindings6 with scope6, best-effort dhcp, primary) · `processors`
+(count/physicalcount/models/isa + cores_per_socket/threads_per_core/speed) ·
+`memory` (system + swap, bytes and human sizes, `*_mb` aliases) · `mountpoints` ·
+`filesystems` · `disks` · `dmi` (bios/board/chassis/manufacturer/product +
+`bios_*`, `productname`, `serialnumber`, `chassistype`, `uuid` … aliases) ·
+`ssh` (rsa/dsa/ecdsa/ed25519 host keys with SHA1/SHA256 SSHFP fingerprints
+computed in pure Go, + `ssh*key` / `sshfp_*` aliases) · `selinux`
+(enabled/enforced/current_mode/config_mode/policy_version) · `load_averages`
+(1m/5m/15m) · `virtual` / `is_virtual` (hypervisor and container detection) ·
+`cloud` (aws/gce/azure) / `ec2_metadata` (best-effort, non-blocking metadata
+probe) · `fips_enabled` · `ruby` (version/sitedir/platform) · `aio_agent_version`
+· `augeasversion` · `env_windows_installdir` · `system_uptime` (+ `uptime*`
+aliases) · `timezone` · `identity` (user/group/uid/gid/privileged) · `path` ·
+`facterversion`, plus the flat legacy aliases.
 
 Where a platform cannot provide a fact in pure Go (for example memory on Windows),
-the fact is skipped gracefully rather than reported wrong.
+or a source is absent (SSH keys, DMI in a container, cloud metadata off-cloud),
+the fact is skipped gracefully rather than reported wrong. The cloud/metadata
+probes are bounded and non-blocking, so a host that is not on a provider never
+stalls fact resolution.
+
+See [BENCHMARKS.md](BENCHMARKS.md) for the lazy/cached resolution benchmarks and
+the MRI-Facter comparison methodology.
 
 ## Go API
 

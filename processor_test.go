@@ -134,6 +134,100 @@ func TestProcessorsWindowsDefaults(t *testing.T) {
 	}
 }
 
+const cpuinfoExtras = `processor	: 0
+model name	: Intel(R) Xeon
+physical id	: 0
+cpu cores	: 4
+siblings	: 8
+cpu MHz		: 2400.000
+processor	: 1
+model name	: Intel(R) Xeon
+physical id	: 0
+cpu cores	: 4
+siblings	: 8
+cpu MHz		: 2400.000
+`
+
+func TestProcessorsExtrasLinux(t *testing.T) {
+	c := (fakeEnv{goos: "linux", files: map[string]string{"/proc/cpuinfo": cpuinfoExtras}}).collection()
+	if v, _ := c.Value("processors.cores_per_socket"); v != 4 {
+		t.Errorf("cores_per_socket = %v", v)
+	}
+	if v, _ := c.Value("processors.threads_per_core"); v != 2 {
+		t.Errorf("threads_per_core = %v", v)
+	}
+	if v, _ := c.Value("processors.speed"); v != "2.40 GHz" {
+		t.Errorf("speed = %v", v)
+	}
+}
+
+func TestProcessorsExtrasAbsent(t *testing.T) {
+	// cpuinfo without cores/siblings/MHz: the refinements are omitted.
+	c := (fakeEnv{goos: "linux", files: map[string]string{"/proc/cpuinfo": cpuinfo2x2}}).collection()
+	if _, ok := c.Value("processors.cores_per_socket"); ok {
+		t.Error("cores_per_socket should be omitted")
+	}
+	if _, ok := c.Value("processors.speed"); ok {
+		t.Error("speed should be omitted")
+	}
+}
+
+func TestParseCPUExtra(t *testing.T) {
+	// siblings < cores: threads_per_core not derivable.
+	ex := parseCPUExtra("cpu cores\t: 8\nsiblings\t: 4\n")
+	if ex.coresPerSocket != 8 || ex.threadsPerCore != 0 {
+		t.Fatalf("mismatched topology = %+v", ex)
+	}
+	// no fields at all.
+	if ex := parseCPUExtra("model\t: x\n"); ex.coresPerSocket != 0 || ex.speed != "" {
+		t.Fatalf("empty = %+v", ex)
+	}
+}
+
+func TestCPUExtraDarwin(t *testing.T) {
+	c := (fakeEnv{goos: "darwin", cmds: map[string]string{
+		"sysctl -n hw.physicalcpu":  "8\n",
+		"sysctl -n hw.logicalcpu":   "16\n",
+		"sysctl -n hw.cpufrequency": "2400000000\n",
+	}}).collection()
+	if v, _ := c.Value("processors.cores_per_socket"); v != 8 {
+		t.Errorf("darwin cores = %v", v)
+	}
+	if v, _ := c.Value("processors.threads_per_core"); v != 2 {
+		t.Errorf("darwin threads = %v", v)
+	}
+	if v, _ := c.Value("processors.speed"); v != "2.40 GHz" {
+		t.Errorf("darwin speed = %v", v)
+	}
+}
+
+func TestCPUExtraDarwinAppleSilicon(t *testing.T) {
+	// No hw.cpufrequency (Apple Silicon): speed omitted, topology still derived.
+	c := (fakeEnv{goos: "darwin", cmds: map[string]string{
+		"sysctl -n hw.physicalcpu": "10\n",
+		"sysctl -n hw.logicalcpu":  "10\n",
+	}}).collection()
+	if v, _ := c.Value("processors.threads_per_core"); v != 1 {
+		t.Errorf("threads = %v", v)
+	}
+	if _, ok := c.Value("processors.speed"); ok {
+		t.Error("speed should be omitted without hw.cpufrequency")
+	}
+}
+
+func TestFormatHz(t *testing.T) {
+	cases := map[uint64]string{
+		2_400_000_000: "2.40 GHz",
+		800_000_000:   "800 MHz",
+		500:           "",
+	}
+	for hz, want := range cases {
+		if got := formatHz(hz); got != want {
+			t.Errorf("formatHz(%d) = %q, want %q", hz, got, want)
+		}
+	}
+}
+
 func TestRepeatModelFloor(t *testing.T) {
 	if got := repeatModel("x", 0); len(got) != 1 {
 		t.Fatalf("repeatModel(0) = %v", got)
