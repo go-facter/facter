@@ -63,13 +63,52 @@ CGO_ENABLED=0 go build -o /usr/local/bin/go-facter ./cmd/facter
 hyperfine --warmup 1 'go-facter --json'
 ```
 
-`hyperfine` reports mean ± σ for each; compare the two means. The go-facter CLI
-is a single static binary with no interpreter start-up and no per-fact subprocess
-fan-out (facts such as DMI, SSH fingerprints, memory, CPU topology and SELinux are
-read and parsed in-process), so it resolves the whole set in a small fraction of
-the reference's wall-clock. Fill in the two measured means from the VM run when
-publishing a release; do not quote a reference figure that has not been measured
-on the target VM.
+`hyperfine` reports mean ± σ for each; compare the two means.
+
+## Measured results — real hardware (2026-07-10)
+
+Measured on an **IBM z15 (LinuxONE, `s390x`)**, Ubuntu 24.04, 2 vCPU, go1.26.4
+(`CGO_ENABLED=0`) vs the MRI `facter` **4.10.0** gem on Ruby 3.2.3, `hyperfine
+--warmup 1`, full fact set, `--json`:
+
+| Metric (full set, `--json`) | MRI Facter 4.10.0 | go-facter | note |
+|-----------------------------|------------------:|----------:|------|
+| Wall-clock, as invoked      | **235 ms**        | 1 251 ms  | go-facter **5.3× slower** here |
+| CPU used (User + System)    | 232 ms            | **49 ms** | go-facter **4.7× less CPU** |
+
+This is a **real finding, reported honestly rather than hidden**: on wall-clock
+the shipped `go-facter --json` CLI **loses** to MRI Facter on this host, even
+though its actual fact computation uses ~4.7× less CPU. The whole 1.25 s is
+dominated by *idle network wait*, not compute — decomposed per fact group:
+
+| Fact group | go-facter wall-clock |
+|------------|---------------------:|
+| `cloud`         | **0.803 s** |
+| `ec2_metadata`  | **0.402 s** |
+| `networking`    | 0.002 s |
+| `os`            | 0.002 s |
+| `processor`     | 0.001 s |
+| `virtual`       | 0.002 s |
+| every other group | ≈ 0.001–0.002 s |
+
+`go-facter` probes the link-local cloud-metadata endpoints (`169.254.169.254`
+and the GCP/Azure equivalents) **unconditionally**, and each probe runs to its
+timeout because this LinuxONE guest is not a cloud instance. MRI Facter instead
+**gates** those resolvers behind a cheap hypervisor/DMI check and skips them on a
+non-cloud host — its `--json` output carries no `ec2`/`cloud` keys and `facter
+ec2_metadata` returns in 0.19 s (interpreter boot only, no probe). Every
+*non-cloud* fact `go-facter` resolves in ~1–2 ms, faster than the reference.
+
+### Action item (perf regression)
+
+`go-facter` should gate the `cloud`/`ec2_metadata` resolvers behind the same
+cheap hypervisor/DMI detection Facter uses, so the default CLI wall-clock on a
+non-cloud host is not dominated by metadata-probe timeouts. Until then, the
+honest headline is: **go-facter's fact *compute* is faster (≈4.7× less CPU), but
+its default full-set *wall-clock* is slower on non-cloud hosts because of the
+unconditional cloud probe.** Tracked as a follow-up; the `-benchmem` in-process
+numbers above (which exclude these environment-dependent network facts) remain
+the fair measure of the resolver/caching engine itself.
 
 ### What is intentionally *not* claimed
 
